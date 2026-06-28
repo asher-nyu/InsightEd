@@ -1,5 +1,7 @@
 # InsightEd
 
+[Live Demo](https://insighted-viz.vercel.app)
+
 InsightEd is an interactive data visualization app for exploring education spending, student performance, predictive modeling results, and focused visualization studies. It is built with React, TypeScript, Vite, Material UI, D3, Leaflet, and noUiSlider.
 
 ## Features
@@ -63,6 +65,16 @@ npm run preview
 - `/projects/misleading-visualization/us-internet-usage`
 - `/projects/interactive-visualization`
 - `/projects/data-visualization-for-advocacy`
+
+## Deployment
+
+InsightEd is deployed on Vercel. The production build is generated with:
+
+```sh
+npm run build
+```
+
+Vercel serves the Vite build output from `dist`.
 
 ## Project Structure
 
