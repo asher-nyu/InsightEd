@@ -1,0 +1,130 @@
+[
+    {
+        "feature": "G2",
+        "coefficient": 0.8675905339892855
+    },
+    {
+        "feature": "school",
+        "coefficient": -0.3597259743296227
+    },
+    {
+        "feature": "paid",
+        "coefficient": -0.28181954370591983
+    },
+    {
+        "feature": "failures",
+        "coefficient": -0.16811404621587625
+    },
+    {
+        "feature": "famsup",
+        "coefficient": 0.16790216526980223
+    },
+    {
+        "feature": "G1",
+        "coefficient": 0.16689796144593558
+    },
+    {
+        "feature": "Fjob",
+        "coefficient": -0.15206823406260023
+    },
+    {
+        "feature": "schoolsup",
+        "coefficient": -0.1435651003737081
+    },
+    {
+        "feature": "internet",
+        "coefficient": 0.13534932202202257
+    },
+    {
+        "feature": "traveltime",
+        "coefficient": 0.12482029897604358
+    },
+    {
+        "feature": "famsize",
+        "coefficient": 0.11047404762989335
+    },
+    {
+        "feature": "Medu",
+        "coefficient": -0.10201188213740951
+    },
+    {
+        "feature": "freetime",
+        "coefficient": -0.09469523049004161
+    },
+    {
+        "feature": "guardian",
+        "coefficient": 0.08822358908588142
+    },
+    {
+        "feature": "address",
+        "coefficient": 0.08752184275805516
+    },
+    {
+        "feature": "Dalc",
+        "coefficient": -0.08406871969199836
+    },
+    {
+        "feature": "reason",
+        "coefficient": -0.07334089015986638
+    },
+    {
+        "feature": "sex",
+        "coefficient": -0.06457371244798704
+    },
+    {
+        "feature": "nursery",
+        "coefficient": -0.06443676515413807
+    },
+    {
+        "feature": "studytime",
+        "coefficient": 0.06356466012524958
+    },
+    {
+        "feature": "famrel",
+        "coefficient": -0.05694815474002674
+    },
+    {
+        "feature": "Fedu",
+        "coefficient": 0.053361769067063
+    },
+    {
+        "feature": "romantic",
+        "coefficient": 0.053329906597324526
+    },
+    {
+        "feature": "health",
+        "coefficient": -0.047286804358032605
+    },
+    {
+        "feature": "Mjob",
+        "coefficient": 0.03411972638576833
+    },
+    {
+        "feature": "Walc",
+        "coefficient": 0.03080117037723695
+    },
+    {
+        "feature": "Pstatus",
+        "coefficient": -0.02838387638691219
+    },
+    {
+        "feature": "higher",
+        "coefficient": 0.023824103658035587
+    },
+    {
+        "feature": "goout",
+        "coefficient": 0.015694672946092142
+    },
+    {
+        "feature": "absences",
+        "coefficient": 0.010675809091058586
+    },
+    {
+        "feature": "activities",
+        "coefficient": -0.008203320127744704
+    },
+    {
+        "feature": "age",
+        "coefficient": 0.005660689698163955
+    }
+]

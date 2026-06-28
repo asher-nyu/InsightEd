@@ -1,0 +1,1 @@
+{"Linear Regression": {"MSE": 1.437093704240998, "R2 Score": 0.8526317103852281}, "Random Forest": {"MSE": 1.548326923076923, "R2 Score": 0.841225182641198}, "Support Vector Machine": {"MSE": 1.6989970731571786, "R2 Score": 0.8257745531882945}}
