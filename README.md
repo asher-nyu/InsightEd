@@ -31,6 +31,12 @@ InsightEd is an interactive data visualization app for exploring education spend
 
 ## Getting Started
 
+Clone the GitHub repository into the current local folder. The current folder should be empty before running this command:
+
+```sh
+git clone git@github.com:asher-nyu/InsightEd.git .
+```
+
 Install dependencies:
 
 ```sh

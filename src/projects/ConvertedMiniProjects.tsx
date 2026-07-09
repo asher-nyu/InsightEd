@@ -2,7 +2,6 @@
 import { Box } from "@mui/material";
 import * as d3 from "d3";
 import L from "leaflet";
-import noUiSlider from "nouislider";
 import { useEffect, useRef, useState } from "react";
 import { addNearestHoverLayer, hideFloatingTooltip, showFloatingTooltip } from "../visualizations/proximityHover";
 
@@ -536,7 +535,9 @@ function InternetUsageProject({ mode }: { mode: "people" | "percentage" }) {
 
 export function RenewableEnergyProject() {
   const rootRef = useRef<HTMLDivElement | null>(null);
-  const sliderRef = useRef<HTMLDivElement | null>(null);
+  const sliderStackRef = useRef<HTMLDivElement | null>(null);
+  const startYearRef = useRef<HTMLInputElement | null>(null);
+  const endYearRef = useRef<HTMLInputElement | null>(null);
   const rangeDisplayRef = useRef<HTMLDivElement | null>(null);
   const legendRef = useRef<HTMLDivElement | null>(null);
   const searchBoxRef = useRef<HTMLInputElement | null>(null);
@@ -546,9 +547,9 @@ export function RenewableEnergyProject() {
   const tooltipRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    ensureStylesheet("nouislider-css", "https://cdnjs.cloudflare.com/ajax/libs/noUiSlider/14.6.3/nouislider.min.css");
-
-    const slider = sliderRef.current;
+    const startYearInput = startYearRef.current;
+    const endYearInput = endYearRef.current;
+    const sliderStack = sliderStackRef.current;
     const rangeDisplay = rangeDisplayRef.current;
     const legendNode = legendRef.current;
     const searchBox = searchBoxRef.current;
@@ -556,7 +557,7 @@ export function RenewableEnergyProject() {
     const chart = chartRef.current;
     const svgNode = svgRef.current;
     const tooltipNode = tooltipRef.current;
-    if (!slider || !rangeDisplay || !legendNode || !searchBox || !dropdown || !chart || !svgNode || !tooltipNode) return;
+    if (!sliderStack || !startYearInput || !endYearInput || !rangeDisplay || !legendNode || !searchBox || !dropdown || !chart || !svgNode || !tooltipNode) return;
 
     d3.select(svgNode).selectAll("*").remove();
     d3.select(legendNode).selectAll("*").remove();
@@ -576,22 +577,45 @@ export function RenewableEnergyProject() {
     };
     const countries = Object.keys(countryMapping);
 
-    noUiSlider.create(slider, {
-      connect: true,
-      format: {
-        from: (value) => Number(value),
-        to: (value) => Math.round(value),
-      },
-      range: { max: 2021, min: 1990 },
-      start: [1990, 2021],
-      step: 1,
-    });
+    let updateRangeChart = () => {};
 
-    slider.noUiSlider.on("update", (values) => {
-      const startYear = Math.round(values[0]);
-      const endYear = Math.round(values[1]);
+    function getSelectedYears(changedInput?: HTMLInputElement) {
+      let startYear = Number(startYearInput.value);
+      let endYear = Number(endYearInput.value);
+
+      if (startYear > endYear) {
+        if (changedInput === startYearInput) {
+          endYear = startYear;
+          endYearInput.value = String(endYear);
+        } else {
+          startYear = endYear;
+          startYearInput.value = String(startYear);
+        }
+      }
+
       rangeDisplay.textContent = `${startYear} - ${endYear}`;
-    });
+      const minYear = Number(endYearInput.min);
+      const maxYear = Number(endYearInput.max);
+      const startProgress = (startYear - minYear) / (maxYear - minYear);
+      const endProgress = (endYear - minYear) / (maxYear - minYear);
+      const thumbInset = 12;
+      const startLeft = thumbInset + (sliderStack.clientWidth - thumbInset * 2) * startProgress;
+      const endLeft = thumbInset + (sliderStack.clientWidth - thumbInset * 2) * endProgress;
+      sliderStack.style.setProperty("--start-left", `${startLeft}px`);
+      sliderStack.style.setProperty("--end-left", `${endLeft}px`);
+      return { startYear, endYear };
+    }
+
+    const onYearInput = (event: Event) => {
+      getSelectedYears(event.currentTarget as HTMLInputElement);
+      updateRangeChart();
+    };
+
+    startYearInput.addEventListener("input", onYearInput);
+    endYearInput.addEventListener("input", onYearInput);
+    getSelectedYears();
+    const rangeResizeObserver = new ResizeObserver(() => getSelectedYears());
+    rangeResizeObserver.observe(sliderStack);
 
     d3.csv(projectAsset("renewable-energy.csv"))
       .then((data) => {
@@ -704,8 +728,7 @@ export function RenewableEnergyProject() {
         }
 
         function updateChart() {
-          const startYear = Math.round(slider.noUiSlider.get()[0]);
-          const endYear = Math.round(slider.noUiSlider.get()[1]);
+          const { startYear, endYear } = getSelectedYears();
 
           x.domain([startYear, endYear]);
           const numTicks = startYear === endYear ? 1 : Math.min(endYear - startYear, 10);
@@ -875,14 +898,16 @@ export function RenewableEnergyProject() {
         document.addEventListener("click", onDocumentClick);
 
         updateChart();
-        slider.noUiSlider.on("update", updateChart);
+        updateRangeChart = updateChart;
       })
       .catch((error) => {
         console.error("Error loading or processing data:", error);
       });
 
     return () => {
-      slider.noUiSlider?.destroy();
+      startYearInput.removeEventListener("input", onYearInput);
+      endYearInput.removeEventListener("input", onYearInput);
+      rangeResizeObserver.disconnect();
       d3.select(chart).on(".renewable-nearest", null);
       d3.select(svgNode).selectAll("*").remove();
       d3.select(legendNode).selectAll("*").remove();
@@ -913,11 +938,28 @@ export function RenewableEnergyProject() {
         "& .legend": { border: "1px solid #d7dee8", borderRadius: "8px", display: "flex", flex: "1 1 auto", flexDirection: "column", gap: "clamp(8px, 0.85cqi, 12px)", justifyContent: "space-evenly", minHeight: 0, overflowY: "auto", p: "clamp(10px, 1cqi, 16px)" },
         "& .legend-item": { alignItems: "center", backgroundColor: "#fff", border: "1px solid #edf1f6", borderRadius: "8px", display: "flex", flex: "1 1 0", gap: "clamp(6px, 0.75cqi, 10px)", mb: 0, minHeight: "clamp(42px, 4cqi, 64px)", px: "clamp(8px, 0.9cqi, 14px)", transition: "background-color 0.2s ease, border-color 0.2s ease", "&:hover": { backgroundColor: "#f8fafc", borderColor: "#cbd5e1" }, "& label": { flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, "& svg": { flexShrink: 0 } },
         "& .legend-checkbox": { mr: "5px" },
-        "& .slider-container": { alignItems: "center", backgroundColor: "#fff", border: "1px solid #d7dee8", borderRadius: "8px", display: "flex", flex: "0 0 auto", minHeight: "clamp(52px, 4.5cqi, 72px)", m: 0, p: 0, width: "100%" },
-        "& .containerA, & .containerB": { alignItems: "center", border: "1px solid #d7dee8", boxSizing: "border-box", display: "flex", height: "100%", justifyContent: "center", position: "relative" },
-        "& .containerA": { border: 0, borderBottomLeftRadius: "8px", borderRight: "1px solid #e2e8f0 !important", borderTopLeftRadius: "8px", flex: "0 0 38%", fontWeight: 800 },
-        "& .containerB": { border: 0, borderBottomRightRadius: "8px", borderLeft: 0, borderTopRightRadius: "8px", flex: 1, px: "clamp(14px, 1.4cqi, 22px)" },
-        "& #slider": { width: "100%" },
+        "& .slider-container": { alignItems: "stretch", backgroundColor: "#fff", border: "1px solid #d7dee8", borderRadius: "8px", display: "flex", flex: "0 0 auto", flexDirection: "column", gap: "10px", m: 0, p: "clamp(10px, 1cqi, 16px)", width: "100%" },
+        "& .range-display": { fontWeight: 800, textAlign: "center" },
+        "& .native-range-row": { color: "#5b6575", display: "grid", gap: 1 },
+        "& .native-range-stack": { height: 30, position: "relative" },
+        "& .native-range": { background: "transparent", inset: 0, m: 0, opacity: 0, pointerEvents: "none", position: "absolute", width: "100%" },
+        "& .native-range-start": { accentColor: "#dedede", zIndex: 4 },
+        "& .native-range-end": { accentColor: "#dedede", zIndex: 3 },
+        "& .native-range-start::-webkit-slider-runnable-track, & .native-range-end::-webkit-slider-runnable-track": { background: "transparent", opacity: 0 },
+        "& .native-range-start::-moz-range-track, & .native-range-end::-moz-range-track": { background: "transparent", opacity: 0 },
+        "& .native-range-start::-webkit-slider-thumb": { opacity: 0 },
+        "& .native-range-start::-moz-range-thumb": { opacity: 0 },
+        "& .native-range-end::-webkit-slider-thumb": { opacity: 0 },
+        "& .native-range-end::-moz-range-thumb": { opacity: 0 },
+        "& .native-range::-webkit-slider-thumb": { pointerEvents: "auto" },
+        "& .native-range::-moz-range-thumb": { pointerEvents: "auto" },
+        "& .range-track": { borderRadius: "999px", height: 8, pointerEvents: "none", position: "absolute", top: "50%", transform: "translateY(-50%)", zIndex: 1 },
+        "& .range-track-before": { backgroundColor: "#d7dde6", left: 0, width: "var(--start-left, 12px)" },
+        "& .range-track-active": { backgroundColor: "#3FB8AF", boxShadow: "inset 0 1px 0 rgba(255, 255, 255, 0.26)", left: "var(--start-left, 12px)", right: "calc(100% - var(--end-left, calc(100% - 12px)))" },
+        "& .range-track-after": { backgroundColor: "#d7dde6", left: "var(--end-left, calc(100% - 12px))", right: 0 },
+        "& .range-start-handle": { backgroundColor: "#fff", border: "1px solid #d9dde4", borderRadius: "999px", boxShadow: "0 1px 2px rgba(15, 23, 42, 0.12)", height: 18, left: "var(--start-left, 12px)", pointerEvents: "none", position: "absolute", top: "50%", transform: "translate(-50%, -50%)", width: 26, zIndex: 5 },
+        "& .range-end-handle": { backgroundColor: "#fff", border: "1px solid #d9dde4", borderRadius: "999px", boxShadow: "0 1px 2px rgba(15, 23, 42, 0.12)", height: 18, left: "var(--end-left, calc(100% - 12px))", pointerEvents: "none", position: "absolute", top: "50%", transform: "translate(-50%, -50%)", width: 26, zIndex: 5 },
+        "& .native-range-labels": { display: "flex", justifyContent: "space-between" },
         "& #chart": { height: "100%", width: "100%" },
         "& #chart svg": { height: "100%", width: "100%" },
         "& .tooltip": { backgroundColor: "#fff", border: "1px solid #d7dee8", borderRadius: "8px", boxShadow: "0 14px 30px rgba(15, 23, 42, 0.16)", display: "none", p: "8px", pointerEvents: "none", position: "fixed", zIndex: 10000 },
@@ -933,8 +975,22 @@ export function RenewableEnergyProject() {
         </div>
         <div className="legend" id="legend" ref={legendRef} />
         <div className="slider-container">
-          <div className="containerA"><div className="range-display" id="rangeDisplay" ref={rangeDisplayRef} /></div>
-          <div className="containerB"><div id="slider" ref={sliderRef} /></div>
+          <div className="range-display" id="rangeDisplay" ref={rangeDisplayRef} />
+          <div className="native-range-row" aria-label="Year range">
+            <div className="native-range-stack" ref={sliderStackRef}>
+              <span className="range-track range-track-before" aria-hidden="true" />
+              <span className="range-track range-track-active" aria-hidden="true" />
+              <span className="range-track range-track-after" aria-hidden="true" />
+              <input ref={startYearRef} aria-label="Start year" className="native-range native-range-start" defaultValue={1990} max={2021} min={1990} step={1} type="range" />
+              <input ref={endYearRef} aria-label="End year" className="native-range native-range-end" defaultValue={2021} max={2021} min={1990} step={1} type="range" />
+              <span className="range-start-handle" aria-hidden="true" />
+              <span className="range-end-handle" aria-hidden="true" />
+            </div>
+            <div className="native-range-labels">
+              <span>1990</span>
+              <span>2021</span>
+            </div>
+          </div>
         </div>
       </div>
       <div className="right" id="chart" ref={chartRef}>
