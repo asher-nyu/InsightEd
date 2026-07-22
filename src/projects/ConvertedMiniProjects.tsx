@@ -2,7 +2,8 @@
 import { Box } from "@mui/material";
 import * as d3 from "d3";
 import L from "leaflet";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import { addNearestHoverLayer, hideFloatingTooltip, showFloatingTooltip } from "../visualizations/proximityHover";
 
 type ProjectRoute = {
@@ -51,6 +52,130 @@ function ensureStylesheet(id: string, href: string) {
   link.href = href;
   document.head.appendChild(link);
 }
+
+/*
+ * Adapted from Leaflet.TileLayer.NoGap.
+ * "THE BEER-WARE LICENSE":
+ * <ivan@sanchezortega.es> wrote this file. As long as you retain this notice you
+ * can do whatever you want with this stuff. If we meet some day, and you think
+ * this stuff is worth it, you can buy me a beer in return.
+ */
+const StitchedTileLayer = L.TileLayer.extend({
+  _onCreateLevel(level) {
+    level.canvas = L.DomUtil.create("canvas", "leaflet-tile-container leaflet-zoom-animated", this._container);
+    level.canvas.setAttribute("aria-hidden", "true");
+    level.context = level.canvas.getContext("2d");
+    this._resetCanvasSize(level);
+  },
+
+  _onUpdateLevel(zoom) {
+    const level = this._levels[zoom];
+    if (level?.canvas) level.canvas.style.zIndex = `${this.options.maxZoom - Math.abs(this._tileZoom - zoom)}`;
+  },
+
+  _onRemoveLevel(zoom) {
+    const canvas = this._levels[zoom]?.canvas;
+    if (canvas) L.DomUtil.remove(canvas);
+  },
+
+  _setZoomTransform(level, center, zoom) {
+    L.GridLayer.prototype._setZoomTransform.call(this, level, center, zoom);
+    this._setCanvasZoomTransform(level, center, zoom);
+  },
+
+  _setCanvasZoomTransform(level, center, zoom) {
+    if (!level.canvasOrigin) return;
+
+    const scale = this._map.getZoomScale(zoom, level.zoom);
+    const translate = level.canvasOrigin
+      .multiplyBy(scale)
+      .subtract(this._map._getNewPixelOrigin(center, zoom))
+      .round();
+
+    if (L.Browser.any3d) L.DomUtil.setTransform(level.canvas, translate, scale);
+    else L.DomUtil.setPosition(level.canvas, translate);
+  },
+
+  _resetCanvasSize(level) {
+    const buffer = this.options.keepBuffer;
+    const pixelBounds = this._getTiledPixelBounds(this._map.getCenter());
+    const tileRange = this._pxBoundsToTileRange(pixelBounds);
+    const tileSize = this.getTileSize();
+
+    tileRange.min = tileRange.min.subtract([buffer, buffer]);
+    tileRange.max = tileRange.max.add([buffer + 1, buffer + 1]);
+
+    const pixelRange = L.bounds(
+      tileRange.min.scaleBy(tileSize),
+      tileRange.max.add([1, 1]).scaleBy(tileSize),
+    );
+    const neededSize = pixelRange.max.subtract(pixelRange.min);
+
+    if (neededSize.x > level.canvas.width || neededSize.y > level.canvas.height) {
+      const previous = document.createElement("canvas");
+      previous.width = level.canvas.width;
+      previous.height = level.canvas.height;
+      previous.getContext("2d")?.drawImage(level.canvas, 0, 0);
+
+      level.canvas.width = Math.max(neededSize.x, level.canvas.width);
+      level.canvas.height = Math.max(neededSize.y, level.canvas.height);
+      level.canvas.style.width = `${level.canvas.width}px`;
+      level.canvas.style.height = `${level.canvas.height}px`;
+      level.context = level.canvas.getContext("2d");
+      level.context.drawImage(previous, 0, 0);
+    }
+
+    if (level.canvasRange) {
+      const offset = level.canvasRange.min.subtract(tileRange.min).scaleBy(tileSize);
+      const previous = document.createElement("canvas");
+      previous.width = level.canvas.width;
+      previous.height = level.canvas.height;
+      previous.getContext("2d")?.drawImage(level.canvas, 0, 0);
+      level.context.clearRect(0, 0, level.canvas.width, level.canvas.height);
+      level.context.drawImage(previous, offset.x, offset.y);
+    }
+
+    level.canvasRange = tileRange;
+    level.canvasOrigin = pixelRange.min;
+    this._setCanvasZoomTransform(level, this._map.getCenter(), this._map.getZoom());
+  },
+
+  _drawTile(coords, image) {
+    const level = this._levels[coords.z];
+    if (!level?.canvasRange) return false;
+    if (!level.canvasRange.contains(coords)) this._resetCanvasSize(level);
+
+    const tileSize = this.getTileSize();
+    const offset = L.point(coords.x, coords.y).subtract(level.canvasRange.min).scaleBy(tileSize);
+    level.context.drawImage(image, offset.x, offset.y, tileSize.x, tileSize.y);
+    return true;
+  },
+
+  _tileReady(coords, error, tile) {
+    L.TileLayer.prototype._tileReady.call(this, coords, error, tile);
+    if (error) return;
+
+    const storedTile = this._tiles[this._tileCoordsToKey(coords)];
+    if (!storedTile) return;
+
+    try {
+      if (this._drawTile(coords, storedTile.el)) storedTile.el.style.visibility = "hidden";
+    } catch {
+      storedTile.el.style.visibility = "inherit";
+    }
+  },
+
+  _removeTile(key) {
+    const tile = this._tiles[key];
+    const level = tile && this._levels[tile.coords.z];
+    if (level?.canvasRange) {
+      const tileSize = this.getTileSize();
+      const offset = L.point(tile.coords.x, tile.coords.y).subtract(level.canvasRange.min).scaleBy(tileSize);
+      level.context.clearRect(offset.x, offset.y, tileSize.x, tileSize.y);
+    }
+    L.GridLayer.prototype._removeTile.call(this, key);
+  },
+});
 
 export function EqualSpacingProject() {
   return (
@@ -534,6 +659,7 @@ function InternetUsageProject({ mode }: { mode: "people" | "percentage" }) {
 }
 
 export function RenewableEnergyProject() {
+  const navigate = useNavigate();
   const rootRef = useRef<HTMLDivElement | null>(null);
   const sliderStackRef = useRef<HTMLDivElement | null>(null);
   const startYearRef = useRef<HTMLInputElement | null>(null);
@@ -576,8 +702,66 @@ export function RenewableEnergyProject() {
       "🇺🇸 United States": "United States",
     };
     const countries = Object.keys(countryMapping);
+    const countrySlugs = Object.fromEntries(
+      countries.map((displayName) => [displayName, countryMapping[displayName].toLowerCase().replace(/\s+/g, "-")]),
+    );
+    const knownCountrySlugs = new Set(Object.values(countrySlugs));
+
+    function readRenewableUrlState() {
+      const params = new URLSearchParams(window.location.search);
+      const clampYear = (value: string | null, fallback: number) => {
+        if (value === null || value.trim() === "") return fallback;
+        const parsed = Number(value);
+        return Number.isInteger(parsed) ? Math.min(2021, Math.max(1990, parsed)) : fallback;
+      };
+      let startYear = clampYear(params.get("from"), 1990);
+      let endYear = clampYear(params.get("to"), 2021);
+
+      if (startYear > endYear) {
+        [startYear, endYear] = [endYear, startYear];
+      }
+
+      const countriesParam = params.get("countries");
+      const selectedCountrySlugs = countriesParam === null
+        ? new Set(Object.values(countrySlugs))
+        : new Set(countriesParam.split(",").filter((slug) => knownCountrySlugs.has(slug)));
+
+      return { endYear, selectedCountrySlugs, startYear };
+    }
+
+    function applyRenewableUrlState() {
+      const { endYear, selectedCountrySlugs, startYear } = readRenewableUrlState();
+      startYearInput.value = String(startYear);
+      endYearInput.value = String(endYear);
+      countries.forEach((displayName) => {
+        checkboxState[displayName] = selectedCountrySlugs.has(countrySlugs[displayName]);
+      });
+    }
+
+    function updateRenewableUrl(replace = false) {
+      const selectedCountries = countries.filter((displayName) => checkboxState[displayName]).map((displayName) => countrySlugs[displayName]);
+      const { endYear, startYear } = getSelectedYears();
+      const queryParts = [];
+
+      if (selectedCountries.length !== countries.length) {
+        queryParts.push(`countries=${selectedCountries.join(",")}`);
+      }
+      if (startYear !== 1990) queryParts.push(`from=${startYear}`);
+      if (endYear !== 2021) queryParts.push(`to=${endYear}`);
+
+      navigate(
+        {
+          pathname: "/projects/interactive-visualization",
+          search: queryParts.length > 0 ? `?${queryParts.join("&")}` : "",
+        },
+        { replace },
+      );
+    }
+
+    applyRenewableUrlState();
 
     let updateRangeChart = () => {};
+    let applyUrlStateFromHistory: (() => void) | null = null;
 
     function getSelectedYears(changedInput?: HTMLInputElement) {
       let startYear = Number(startYearInput.value);
@@ -609,6 +793,7 @@ export function RenewableEnergyProject() {
     const onYearInput = (event: Event) => {
       getSelectedYears(event.currentTarget as HTMLInputElement);
       updateRangeChart();
+      updateRenewableUrl(true);
     };
 
     startYearInput.addEventListener("input", onYearInput);
@@ -623,10 +808,6 @@ export function RenewableEnergyProject() {
           .filter((d) => Object.values(countryMapping).includes(d["Country Name"]) && !Number.isNaN(+d.Value))
           .map((d) => ({ country: d["Country Name"], year: +d.Year, value: +d.Value }));
 
-        countries.forEach((displayName) => {
-          checkboxState[displayName] = true;
-        });
-
         const margin = { top: 20, right: 30, bottom: 60, left: 60 };
         const width = chart.clientWidth - margin.left - margin.right;
         const height = chart.clientHeight - margin.top - margin.bottom;
@@ -636,13 +817,23 @@ export function RenewableEnergyProject() {
         const color = d3.scaleOrdinal(d3.schemeCategory10).domain(countries);
         const xAxis = svg.append("g").attr("transform", `translate(0, ${height})`).call(d3.axisBottom(x).ticks(10).tickFormat(d3.format("d")));
 
-        svg.append("g").call(d3.axisLeft(y));
-        svg.append("text").attr("x", width / 2).attr("y", height + margin.bottom - 10).attr("text-anchor", "middle").text("Year");
+        const yAxis = svg.append("g").call(d3.axisLeft(y));
+        const xAxisLabel = svg.append("text").attr("x", width / 2).attr("y", height + margin.bottom - 10).attr("text-anchor", "middle").text("Year");
         svg.select(".domain").remove();
-        svg.append("text").attr("x", -(height / 2)).attr("y", -margin.left + 15).attr("text-anchor", "middle").attr("transform", "rotate(-90)").text("→ Percentage of Total Energy Consumption (%)");
+        const yAxisLabel = svg.append("text").attr("x", -(height / 2)).attr("y", -margin.left + 15).attr("text-anchor", "middle").attr("transform", "rotate(-90)").text("→ Percentage of Total Energy Consumption (%)");
         svg.select(".domain").remove();
-        svg.append("g").call(d3.axisLeft(y).tickSize(-width).tickFormat("")).selectAll("line").style("stroke", "lightgray");
+        const gridLines = svg.append("g").call(d3.axisLeft(y).tickSize(-width).tickFormat("")).selectAll("line").style("stroke", "lightgray");
         svg.select(".domain").remove();
+
+        function animateChartScaffold() {
+          if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+
+          const entrance = d3.transition().duration(1000).ease(d3.easeCubicInOut);
+          yAxis.attr("opacity", 0).transition(entrance).attr("opacity", 1);
+          xAxisLabel.attr("opacity", 0).transition(entrance).attr("opacity", 1);
+          yAxisLabel.attr("opacity", 0).transition(entrance).attr("opacity", 1);
+          gridLines.style("opacity", 0).transition(entrance).style("opacity", 1);
+        }
 
         const legend = d3
           .select(legendNode)
@@ -657,6 +848,7 @@ export function RenewableEnergyProject() {
               checkbox.checked = !checkbox.checked;
               checkboxState[d] = checkbox.checked;
               updateChart();
+              updateRenewableUrl();
               checkSearchBoxPlaceholder();
             }
           });
@@ -666,11 +858,12 @@ export function RenewableEnergyProject() {
           .attr("type", "checkbox")
           .attr("class", "legend-checkbox")
           .attr("id", (d) => `checkbox-${d}`)
-          .attr("checked", true)
+          .property("checked", (d) => checkboxState[d])
           .on("change", function (event, d) {
             event.stopPropagation();
             checkboxState[d] = event.target.checked;
             updateChart();
+            updateRenewableUrl();
             checkSearchBoxPlaceholder();
           });
 
@@ -695,6 +888,7 @@ export function RenewableEnergyProject() {
             checkbox.checked = !checkbox.checked;
             checkboxState[d] = checkbox.checked;
             updateChart();
+            updateRenewableUrl();
             checkSearchBoxPlaceholder();
           });
 
@@ -727,12 +921,21 @@ export function RenewableEnergyProject() {
           });
         }
 
-        function updateChart() {
+        function updateChart(animate = false) {
           const { startYear, endYear } = getSelectedYears();
+          const shouldAnimate = animate && !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
           x.domain([startYear, endYear]);
           const numTicks = startYear === endYear ? 1 : Math.min(endYear - startYear, 10);
-          xAxis.transition().duration(500).call(d3.axisBottom(x).ticks(numTicks).tickFormat(d3.format("d")));
+          const nextXAxis = d3.axisBottom(x).ticks(numTicks).tickFormat(d3.format("d"));
+
+          xAxis.interrupt();
+          if (shouldAnimate) {
+            xAxis.attr("opacity", 0).call(nextXAxis).transition().duration(1000).ease(d3.easeCubicInOut).attr("opacity", 1);
+          } else {
+            xAxis.attr("opacity", 1).transition().duration(500).call(nextXAxis);
+          }
+
           svg.selectAll(".line").remove();
           svg.selectAll("circle").remove();
 
@@ -740,7 +943,7 @@ export function RenewableEnergyProject() {
             const actualName = countryMapping[displayName];
             if (checkboxState[displayName]) {
               const countryData = filteredData.filter((d) => d.country === actualName && d.year >= startYear && d.year <= endYear);
-              svg
+              const countryLine = svg
                 .append("path")
                 .datum(countryData)
                 .attr("class", `line line-${actualName.replace(/\s/g, "")}`)
@@ -751,7 +954,11 @@ export function RenewableEnergyProject() {
                 .on("mouseover", () => highlightCountry(`line-${actualName.replace(/\s/g, "")}`))
                 .on("mouseout", resetHighlight);
 
-              svg
+              if (shouldAnimate) {
+                countryLine.attr("opacity", 0).transition().duration(1000).ease(d3.easeCubicInOut).attr("opacity", 1);
+              }
+
+              const countryDots = svg
                 .selectAll(`.dot-${actualName.replace(/\s/g, "")}`)
                 .data(countryData)
                 .enter()
@@ -759,7 +966,7 @@ export function RenewableEnergyProject() {
                 .attr("class", `dot dot-${actualName.replace(/\s/g, "")}`)
                 .attr("cx", (d) => x(d.year))
                 .attr("cy", (d) => y(d.value))
-                .attr("r", 4)
+                .attr("r", shouldAnimate ? 0 : 4)
                 .attr("fill", color(displayName))
                 .on("mouseover", (event, d) => {
                   highlightCountry(`line-${d.country.replace(/\s/g, "")}`, d);
@@ -769,6 +976,10 @@ export function RenewableEnergyProject() {
                   resetHighlight();
                   tooltip.style("display", "none");
                 });
+
+              if (shouldAnimate) {
+                countryDots.transition().duration(1000).ease(d3.easeBackOut).attr("r", 4);
+              }
             }
           });
         }
@@ -836,6 +1047,7 @@ export function RenewableEnergyProject() {
               dropdown.style.display = "none";
               updateLegendForSelectedCountry(country);
               updateChart();
+              updateRenewableUrl();
             });
             dropdown.appendChild(item);
           });
@@ -897,7 +1109,18 @@ export function RenewableEnergyProject() {
         searchBox.addEventListener("blur", onBlur);
         document.addEventListener("click", onDocumentClick);
 
-        updateChart();
+        applyUrlStateFromHistory = () => {
+          applyRenewableUrlState();
+          d3.select(legendNode).selectAll(".legend-checkbox").property("checked", (displayName) => checkboxState[displayName]);
+          searchBox.value = "";
+          getSelectedYears();
+          updateChart();
+          checkSearchBoxPlaceholder();
+        };
+        window.addEventListener("popstate", applyUrlStateFromHistory);
+
+        animateChartScaffold();
+        updateChart(true);
         updateRangeChart = updateChart;
       })
       .catch((error) => {
@@ -908,6 +1131,7 @@ export function RenewableEnergyProject() {
       startYearInput.removeEventListener("input", onYearInput);
       endYearInput.removeEventListener("input", onYearInput);
       rangeResizeObserver.disconnect();
+      if (applyUrlStateFromHistory) window.removeEventListener("popstate", applyUrlStateFromHistory);
       d3.select(chart).on(".renewable-nearest", null);
       d3.select(svgNode).selectAll("*").remove();
       d3.select(legendNode).selectAll("*").remove();
@@ -1001,27 +1225,37 @@ export function RenewableEnergyProject() {
   );
 }
 
-const advocacySections = [
-  { icon: "📈", title: "CO₂ Levels Over Time", description: "Annual mean CO₂ concentration has increased continuously from 1959 to 2023, signaling the growing impact of industrialization." },
-  { icon: "🌎", title: "Major Contributors to CO₂ Emissions", description: "Major countries that emit CO₂ are responsible for the largest shares of global emissions, driving the rise in atmospheric concentrations." },
-  { icon: "🔥", title: "Increasing CO₂ → Global Land and Ocean Temperature Anomalies", description: "As the greenhouse gas CO₂ increases, global land and ocean temperature anomalies show a clear warming trend." },
-  { icon: "🌊", title: "Rising Temperatures → Sea Levels", description: "Higher temperatures have led to melting ice and thermal expansion, causing sea levels to rise and threatening coastal regions." },
-  { icon: "⚡", title: "Dependence on Fossil Fuels → The Energy Challenge", description: "The world still depends heavily on fossil fuels for energy. Renewables and nuclear remain small players in the energy mix." },
+export const advocacySections = [
+  { icon: "📈", path: "co2-levels", title: "CO₂ Levels Over Time", description: "Annual mean CO₂ concentration has increased continuously from 1959 to 2023, signaling the growing impact of industrialization." },
+  { icon: "🌎", path: "major-co2-contributors", title: "Major Contributors to CO₂ Emissions", description: "Major countries that emit CO₂ are responsible for the largest shares of global emissions, driving the rise in atmospheric concentrations." },
+  { icon: "🔥", path: "temperature-anomalies", title: "Increasing CO₂ → Global Land and Ocean Temperature Anomalies", description: "As the greenhouse gas CO₂ increases, global land and ocean temperature anomalies show a clear warming trend." },
+  { icon: "🌊", path: "sea-level-rise", title: "Rising Temperatures → Sea Levels", description: "Higher temperatures have led to melting ice and thermal expansion, causing sea levels to rise and threatening coastal regions." },
+  { icon: "⚡", path: "energy-mix", title: "Dependence on Fossil Fuels → The Energy Challenge", description: "The world still depends heavily on fossil fuels for energy. Renewables and nuclear remain small players in the energy mix." },
 ];
 
-export function AdvocacyProject() {
-  const [currentIndex, setCurrentIndex] = useState(0);
+export function AdvocacyProject({ sectionPath }: { sectionPath?: string }) {
+  const navigate = useNavigate();
+  const currentIndex = Math.max(0, advocacySections.findIndex((section) => section.path === sectionPath));
   const rightRef = useRef<HTMLDivElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
+  const mapRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const right = rightRef.current;
     const svgNode = svgRef.current;
-    if (!right || !svgNode) return;
+    const mapNode = mapRef.current;
+    if (!right || !svgNode || !mapNode) return;
 
     const svg = d3.select(svgNode);
     svg.selectAll("*").remove();
     d3.selectAll(".advocacy-tooltip").remove();
+    svg.style("display", currentIndex === 1 ? "none" : "block");
+    mapNode.style.display = currentIndex === 1 ? "block" : "none";
+
+    let leafletMap: L.Map | null = null;
+    let bubbleAnimationFallback: number | null = null;
+    const bubbleAnimations: Animation[] = [];
+    let disposed = false;
 
     const margin = { top: 0, right: 30, bottom: 60, left: 30 };
     const width = right.clientWidth - margin.left - margin.right;
@@ -1041,7 +1275,8 @@ export function AdvocacyProject() {
         .style("padding", "5px")
         .style("border-radius", "5px")
         .style("pointer-events", "none")
-        .style("display", "none");
+        .style("display", "none")
+        .style("z-index", "10000");
 
     function renderLineChart(csvPath: string, mapRow: (d: Record<string, string>) => { label: number; value: number }, domain: [number, number] | null, yDomainStart: number, title: string, yLabel: string, stroke: string, tooltipLabel: string) {
       d3.csv(csvPath).then((data) => {
@@ -1097,142 +1332,180 @@ export function AdvocacyProject() {
     if (currentIndex === 0) {
       renderLineChart(projectAsset("advocacy-section1.csv"), (d) => ({ label: +d.year, value: +d.mean }), [1959, 2023], 300, "Global Atmospheric CO₂ Levels Over Time", "→ CO₂ Concentration (ppm)", "red", "CO₂");
     } else if (currentIndex === 1) {
-      d3.csv(projectAsset("advocacy-section2.csv")).then((data) => {
-        const validData = data
-          .map((d) => ({ country: d.Country, emissions: +d["MtCO₂"], latitude: +d.Latitude, longitude: +d.Longitude }))
-          .filter((d) => !Number.isNaN(d.emissions) && !Number.isNaN(d.latitude) && !Number.isNaN(d.longitude))
-          .sort((a, b) => b.emissions - a.emissions)
-          .map((d, index) => ({ ...d, rank: index + 1 }));
+      ensureStylesheet("leaflet-css", "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css");
 
-        const projection = d3.geoMercator().scale(150).translate([width / 2, height / 1.5]);
-        const path = d3.geoPath().projection(projection);
-        const mapGroup = svg.append("g");
-        const bubbleGroup = svg.append("g");
-        const nameMapping = { "United States of America": "USA", "United Kingdom": "England" };
-        const displayNameMapping = { USA: "United States", England: "United Kingdom" };
-        const zoom = d3
-          .zoom()
-          .scaleExtent([1, 8])
-          .translateExtent([[0, 0], [width, height]])
-          .filter((event) => !event.ctrlKey && event.type !== "dblclick")
-          .on("zoom", (event) => {
-            if (event.transform.k === 1) {
-              event.transform.x = 0;
-              event.transform.y = 0;
-            }
-            mapGroup.attr("transform", event.transform);
-            bubbleGroup.attr("transform", event.transform);
+      Promise.all([
+        d3.csv(projectAsset("advocacy-section2.csv")),
+        d3.json("https://raw.githubusercontent.com/holtzy/D3-graph-gallery/master/DATA/world.geojson"),
+      ])
+        .then(([data, world]) => {
+          if (disposed) return;
+
+          const validData = data
+            .map((d) => ({ country: d.Country, emissions: +d["MtCO₂"], latitude: +d.Latitude, longitude: +d.Longitude }))
+            .filter((d) => !Number.isNaN(d.emissions) && !Number.isNaN(d.latitude) && !Number.isNaN(d.longitude))
+            .sort((a, b) => b.emissions - a.emissions)
+            .map((d, index) => ({ ...d, rank: index + 1 }));
+          const nameMapping = { "United States of America": "USA", "United Kingdom": "England" };
+          const displayNameMapping = { USA: "United States", England: "United Kingdom" };
+          const countryStyle = { color: "#888888", fillColor: "transparent", fillOpacity: 0, weight: 0.5 };
+          const bubbleScale = d3.scaleSqrt().domain([0, d3.max(validData, (d) => d.emissions)]).range([0, 30]);
+          const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+          const tooltip = addTooltip();
+
+          leafletMap = L.map(mapNode, {
+            attributionControl: true,
+            boxZoom: true,
+            doubleClickZoom: false,
+            fadeAnimation: false,
+            maxBoundsViscosity: 1,
+            scrollWheelZoom: true,
+            zoomAnimation: true,
+            zoomControl: false,
+            zoomDelta: Math.log2(1.2),
+            zoomSnap: 0,
           });
 
-        svg.call(zoom);
-        const zoomControls = svg.append("g").attr("class", "zoom-controls").attr("transform", "translate(10, 10)");
-        [
-          ["🌐", 0, () => svg.transition().duration(500).call(zoom.transform, d3.zoomIdentity.translate(0, 0).scale(1))],
-          ["➕", 40, () => svg.transition().duration(500).call(zoom.scaleBy, 1.2)],
-          ["➖", 80, () => svg.transition().duration(500).call(zoom.scaleBy, 0.8)],
-        ].forEach(([label, y, handler]) => {
-          const group = zoomControls.append("g").attr("transform", `translate(0, ${y})`).style("cursor", "pointer").on("click", handler);
-          group.append("rect").attr("x", -15).attr("y", -15).attr("width", 30).attr("height", 30).attr("rx", 5).attr("ry", 5).style("fill", "#eaeaea").style("stroke", "#666").style("stroke-width", 1);
-          group.append("text").attr("x", 0).attr("y", 0).attr("dy", "0.35em").style("text-anchor", "middle").text(label);
-        });
+          new StitchedTileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+            maxZoom: 19,
+          }).addTo(leafletMap);
+          leafletMap.attributionControl.setPrefix(false);
 
-        const tooltip = addTooltip();
-        d3.json("https://raw.githubusercontent.com/holtzy/D3-graph-gallery/master/DATA/world.geojson")
-          .then((world) => {
-            mapGroup
-              .selectAll("path")
-              .data(world.features)
-              .enter()
-              .append("path")
-              .attr("d", path)
-              .attr("fill", "#e0e0e0")
-              .attr("stroke", "#888888")
-              .attr("stroke-width", 0.5)
-              .on("mouseover", (event, d) => {
-                const countryName = nameMapping[d.properties.name] || d.properties.name;
-                d3.select(event.currentTarget).attr("fill", "#ffcccb");
-                const countryData = validData.find((country) => country.country === countryName);
-                if (countryData) {
-                  d3.select(`#bubble-${countryData.country.replace(/\s/g, "-")}`).attr("fill", "orange");
-                  tooltip.style("display", "block").html(`#${countryData.rank} ${displayNameMapping[countryData.country] || countryData.country}<br>Emissions: ${countryData.emissions.toFixed(2)} MtCO₂`);
-                }
-              })
-              .on("mousemove", (event) => {
-                const tooltipWidth = tooltip.node().offsetWidth;
-                let tooltipX = event.pageX + 10;
-                if (tooltipX + tooltipWidth > window.innerWidth) tooltipX = event.pageX - tooltipWidth - 10;
-                tooltip.style("left", `${tooltipX}px`).style("top", `${event.pageY + 10}px`);
-              })
-              .on("mouseout", (event, d) => {
-                d3.select(event.currentTarget).attr("fill", "#e0e0e0");
-                const countryName = nameMapping[d.properties.name] || d.properties.name;
-                const countryData = validData.find((country) => country.country === countryName);
-                if (countryData) d3.select(`#bubble-${countryData.country.replace(/\s/g, "-")}`).attr("fill", "black");
-                tooltip.style("display", "none");
+          const countryLayers = new Map();
+          L.geoJSON(world, {
+            interactive: false,
+            style: () => countryStyle,
+            onEachFeature: (feature, layer) => {
+              const sourceName = feature.properties?.name;
+              const countryName = nameMapping[sourceName] || sourceName;
+              if (validData.some((country) => country.country === countryName)) {
+                countryLayers.set(countryName, layer);
+              }
+            },
+          }).addTo(leafletMap);
+
+          leafletMap.fitBounds(
+            [
+              [-58, -180],
+              [85, 180],
+            ],
+            { animate: false, padding: [0, 0] },
+          );
+          const initialCenter = leafletMap.getCenter();
+          const initialZoom = leafletMap.getZoom();
+          leafletMap.setMinZoom(initialZoom);
+          leafletMap.setMaxZoom(initialZoom + 3);
+          leafletMap.setMaxBounds([
+            [-85, -180],
+            [85, 180],
+          ]);
+
+          const title = L.DomUtil.create("div", "advocacy-map-title", mapNode);
+          title.textContent = "Top 20 Global CO₂ Emitters in 2023";
+          if (reducedMotion) title.classList.add("visible");
+          else requestAnimationFrame(() => title.classList.add("visible"));
+
+          const controls = L.DomUtil.create("div", "zoom-controls advocacy-map-controls", mapNode);
+          L.DomEvent.disableClickPropagation(controls);
+          L.DomEvent.disableScrollPropagation(controls);
+          [
+            ["🌐", "Reset map", () => leafletMap?.setView(initialCenter, initialZoom, { animate: true, duration: 0.5 })],
+            ["➕", "Zoom in", () => leafletMap?.zoomIn(Math.log2(1.2), { animate: true })],
+            ["➖", "Zoom out", () => leafletMap?.zoomOut(Math.log2(1.25), { animate: true })],
+          ].forEach(([label, ariaLabel, handler]) => {
+            const button = L.DomUtil.create("button", "advocacy-map-control", controls);
+            button.type = "button";
+            button.setAttribute("aria-label", ariaLabel);
+            button.textContent = label;
+            L.DomEvent.on(button, "click", handler);
+          });
+
+          const bubbleMarkers = new Map();
+          let highlightedCountry = null;
+
+          const zoomFactor = () => 2 ** (leafletMap.getZoom() - initialZoom);
+          const updateBubbleRadii = () => {
+            const factor = zoomFactor();
+            validData.forEach((datum) => {
+              bubbleMarkers.get(datum.country)?.setRadius(bubbleScale(datum.emissions) * factor);
+            });
+          };
+          const clearHighlight = () => {
+            if (!highlightedCountry) return;
+            countryLayers.get(highlightedCountry)?.setStyle(countryStyle);
+            bubbleMarkers.get(highlightedCountry)?.setStyle({ fillColor: "black" });
+            highlightedCountry = null;
+          };
+          const highlight = (datum) => {
+            if (highlightedCountry === datum.country) return;
+            clearHighlight();
+            highlightedCountry = datum.country;
+            countryLayers.get(datum.country)?.setStyle({ color: "#888888", fillColor: "#ffcccb", fillOpacity: 1, weight: 0.5 });
+            const marker = bubbleMarkers.get(datum.country);
+            marker?.setStyle({ fillColor: "orange" });
+            marker?.bringToFront();
+          };
+          const tooltipHtml = (datum) => `#${datum.rank} ${displayNameMapping[datum.country] || datum.country}<br>Emissions: ${datum.emissions.toFixed(2)} MtCO₂`;
+
+          validData.forEach((datum) => {
+            const marker = L.circleMarker([datum.latitude, datum.longitude], {
+              bubblingMouseEvents: true,
+              fillColor: "black",
+              fillOpacity: 0.6,
+              radius: bubbleScale(datum.emissions),
+              stroke: false,
+            }).addTo(leafletMap);
+            bubbleMarkers.set(datum.country, marker);
+
+            const markerElement = marker.getElement();
+            if (!reducedMotion && markerElement) {
+              markerElement.style.transformBox = "fill-box";
+              markerElement.style.transformOrigin = "center";
+              markerElement.style.willChange = "transform";
+              const animation = markerElement.animate(
+                [{ transform: "scale(0)" }, { transform: "scale(1)" }],
+                { duration: 1000, easing: "cubic-bezier(0.34, 1.56, 0.64, 1)", fill: "both" },
+              );
+              animation.onfinish = () => {
+                markerElement.style.willChange = "";
+              };
+              bubbleAnimations.push(animation);
+            }
+          });
+
+          leafletMap.on("zoom", updateBubbleRadii);
+          leafletMap.on("mousemove", (event) => {
+            const nearest = d3.least(validData, (datum) => {
+              const point = leafletMap.latLngToContainerPoint([datum.latitude, datum.longitude]);
+              return (point.x - event.containerPoint.x) ** 2 + (point.y - event.containerPoint.y) ** 2;
+            });
+            if (!nearest) return;
+
+            highlight(nearest);
+            showFloatingTooltip(event.originalEvent, tooltip, tooltipHtml(nearest));
+          });
+
+          const onMapLeave = () => {
+            clearHighlight();
+            hideFloatingTooltip(tooltip);
+          };
+          mapNode.addEventListener("mouseleave", onMapLeave);
+          leafletMap.once("unload", () => mapNode.removeEventListener("mouseleave", onMapLeave));
+
+          if (!reducedMotion) {
+            bubbleAnimationFallback = window.setTimeout(() => {
+              if (disposed) return;
+              bubbleAnimations.forEach((animation) => {
+                if (animation.playState === "running" || animation.playState === "pending") animation.finish();
               });
+              title.classList.add("visible");
+            }, 1100);
+          }
 
-            const scale = d3.scaleSqrt().domain([0, d3.max(validData, (d) => d.emissions)]).range([0, 30]);
-            bubbleGroup
-              .selectAll("circle")
-              .data(validData)
-              .enter()
-              .append("circle")
-              .attr("id", (d) => `bubble-${d.country.replace(/\s/g, "-")}`)
-              .attr("cx", (d) => projection([d.longitude, d.latitude])[0])
-              .attr("cy", (d) => projection([d.longitude, d.latitude])[1])
-              .attr("r", 0)
-              .attr("fill", "black")
-              .attr("opacity", 0.6)
-              .transition()
-              .duration(1000)
-              .ease(d3.easeBackOut)
-              .attr("r", (d) => scale(d.emissions))
-              .on("end", function () {
-                d3.select(this)
-                  .on("mouseover", function (event, d) {
-                    d3.select(this).attr("fill", "orange");
-                    mapGroup.selectAll("path").filter((pathData) => (nameMapping[pathData.properties.name] || pathData.properties.name) === d.country).attr("fill", "#ffcccb");
-                    tooltip.style("display", "block").html(`#${d.rank} ${displayNameMapping[d.country] || d.country}<br>Emissions: ${d.emissions.toFixed(2)} MtCO₂`).style("left", `${event.pageX + 10}px`).style("top", `${event.pageY + 10}px`);
-                  })
-                  .on("mousemove", (event) => tooltip.style("left", `${event.pageX + 10}px`).style("top", `${event.pageY + 10}px`))
-                  .on("mouseout", function () {
-                    d3.select(this).attr("fill", "black");
-                    mapGroup.selectAll("path").attr("fill", "#e0e0e0");
-                    tooltip.style("display", "none");
-                  });
-              });
-
-            svg
-              .on("mousemove.nearest-bubble", function (event) {
-                if ((event.target as Element).closest?.(".zoom-controls")) return;
-
-                const [mouseX, mouseY] = d3.pointer(event, svg.node());
-                const transform = d3.zoomTransform(bubbleGroup.node());
-                const nearest = d3.least(validData, (datum) => {
-                  const point = transform.apply(projection([datum.longitude, datum.latitude]) ?? [0, 0]);
-                  return (point[0] - mouseX) ** 2 + (point[1] - mouseY) ** 2;
-                });
-                if (!nearest) return;
-
-                const nearestPoint = transform.apply(projection([nearest.longitude, nearest.latitude]) ?? [0, 0]);
-                const distance = Math.sqrt((nearestPoint[0] - mouseX) ** 2 + (nearestPoint[1] - mouseY) ** 2);
-
-                mapGroup.selectAll("path").attr("fill", "#e0e0e0");
-                bubbleGroup.selectAll("circle").attr("fill", "black");
-                mapGroup.selectAll("path").filter((pathData) => (nameMapping[pathData.properties.name] || pathData.properties.name) === nearest.country).attr("fill", "#ffcccb");
-                d3.select(`#bubble-${nearest.country.replace(/\s/g, "-")}`).attr("fill", "orange");
-                showFloatingTooltip(event, tooltip, `#${nearest.rank} ${displayNameMapping[nearest.country] || nearest.country}<br>Emissions: ${nearest.emissions.toFixed(2)} MtCO₂`);
-              })
-              .on("mouseout.nearest-bubble", () => {
-                mapGroup.selectAll("path").attr("fill", "#e0e0e0");
-                bubbleGroup.selectAll("circle").attr("fill", "black");
-                hideFloatingTooltip(tooltip);
-              });
-
-            svg.append("text").attr("x", width / 2).attr("y", margin.top / 2).attr("text-anchor", "middle").attr("opacity", 0).text("Top 20 Global CO₂ Emitters in 2023").transition().duration(1000).ease(d3.easeCubicInOut).attr("opacity", 1);
-          })
-          .catch((error) => console.error("Error loading world map data:", error));
-      });
+          requestAnimationFrame(() => leafletMap?.invalidateSize({ animate: false }));
+        })
+        .catch((error) => console.error("Error loading OpenStreetMap data:", error));
     } else if (currentIndex === 2) {
       d3.csv(projectAsset("advocacy-section3.csv")).then((data) => {
         const validData = data.map((d) => ({ year: +d.Year, anomaly: (+d.Anomaly * 9) / 5 })).filter((d) => !Number.isNaN(d.year) && !Number.isNaN(d.anomaly));
@@ -1385,6 +1658,12 @@ export function AdvocacyProject() {
     }
 
     return () => {
+      disposed = true;
+      if (bubbleAnimationFallback !== null) window.clearTimeout(bubbleAnimationFallback);
+      bubbleAnimations.forEach((animation) => animation.cancel());
+      leafletMap?.remove();
+      mapNode.replaceChildren();
+      mapNode.className = "advocacy-leaflet-map";
       svg.selectAll("*").remove();
       d3.selectAll(".advocacy-tooltip").remove();
     };
@@ -1414,13 +1693,30 @@ export function AdvocacyProject() {
         "& .section-title": { flexShrink: 0, fontSize: "clamp(0.9rem, 1.05cqi, 1.05rem)", fontWeight: 800, lineHeight: 1.15 },
         "& .section-description": { color: "#5b6575", display: "-webkit-box", flexShrink: 1, fontSize: "clamp(0.78rem, 0.88cqi, 0.95rem)", lineHeight: 1.35, overflow: "hidden", textOverflow: "ellipsis", WebkitBoxOrient: "vertical", WebkitLineClamp: 2 },
         "& .right": { ...panelSx, gridColumn: 2, gridRow: 2, minHeight: 0, p: "clamp(14px, 1.4cqi, 24px)" },
-        "& #chart, & #chart svg": { height: "100%", width: "100%" },
+        "& .right.map-active": { overflow: "hidden", p: 0 },
+        "& #chart": { height: "100%", overflow: "hidden", position: "relative", width: "100%" },
+        "& #chart > svg, & .advocacy-leaflet-map": { height: "100%", width: "100%" },
+        "& .advocacy-leaflet-map": { background: "#fff", overflow: "hidden" },
+        "& .advocacy-leaflet-map .leaflet-pane > svg": { height: "auto", maxWidth: "none", width: "auto" },
+        "& .advocacy-map-title": { fontSize: "1em", left: "50%", opacity: 0, pointerEvents: "none", position: "absolute", textAlign: "center", top: 0, transform: "translateX(-50%)", transition: "opacity 1s ease-in-out", whiteSpace: "nowrap", zIndex: 1000 },
+        "& .advocacy-map-title.visible": { opacity: 1 },
+        "& .advocacy-map-controls": { display: "flex", flexDirection: "column", gap: "10px", left: "10px", position: "absolute", top: "10px", zIndex: 1000 },
+        "& .advocacy-map-control": { alignItems: "center", appearance: "none", background: "#eaeaea", border: "1px solid #666", borderRadius: "5px", color: "#000", display: "flex", fontFamily: "system-ui", fontSize: "16px", height: "30px", justifyContent: "center", lineHeight: 1, margin: 0, p: 0, width: "30px" },
       }}
     >
       <div className="top"><strong style={{ fontSize: "20px" }}>What Role Do CO₂ and Energy Play in Shaping Our Planet’s Future?</strong></div>
       <div className="left" id="sections-container">
         {advocacySections.map((section, index) => (
-          <div className={`section${currentIndex === index ? " active" : ""}`} data-index={index} key={section.title} onClick={() => setCurrentIndex(index)}>
+          <div
+            className={`section${currentIndex === index ? " active" : ""}`}
+            data-index={index}
+            key={section.title}
+            onClick={() => {
+              if (currentIndex !== index) {
+                navigate(`/projects/data-visualization-for-advocacy/${section.path}`);
+              }
+            }}
+          >
             <div className="section-image"><span>{section.icon}</span></div>
             <div className="section-text">
               <div className="section-title">{section.title}</div>
@@ -1429,8 +1725,11 @@ export function AdvocacyProject() {
           </div>
         ))}
       </div>
-      <div className="right" ref={rightRef}>
-        <div id="chart"><svg ref={svgRef} /></div>
+      <div className={`right${currentIndex === 1 ? " map-active" : ""}`} ref={rightRef}>
+        <div id="chart">
+          <svg ref={svgRef} />
+          <div className="advocacy-leaflet-map" ref={mapRef} />
+        </div>
       </div>
     </Box>
   );
@@ -1441,6 +1740,6 @@ export function ConvertedMiniProject({ slug, variant }: ProjectRoute) {
   if (slug === "expository-visualization") return <SunshineHoursProject />;
   if (slug === "misleading-visualization") return <InternetUsageProject mode={variant === "us-internet-usage" ? "percentage" : "people"} />;
   if (slug === "interactive-visualization") return <RenewableEnergyProject />;
-  if (slug === "data-visualization-for-advocacy") return <AdvocacyProject />;
+  if (slug === "data-visualization-for-advocacy") return <AdvocacyProject sectionPath={variant} />;
   return null;
 }

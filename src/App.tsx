@@ -1,6 +1,5 @@
 import { Box, Button, Typography } from "@mui/material";
-import { useState } from "react";
-import { Route, Routes, Link as RouterLink } from "react-router-dom";
+import { Navigate, Route, Routes, Link as RouterLink, useNavigate } from "react-router-dom";
 import { ProjectDetail } from "./projects/ProjectDetail";
 import { ProjectsIndex } from "./projects/ProjectsIndex";
 import { glassPanelSx } from "./theme";
@@ -12,32 +11,41 @@ import { UserReviewsView } from "./views/UserReviewsView";
 const sections = [
   {
     icon: "🌎",
+    path: "/education-expenditure",
+    slug: "education-expenditure",
     title: "Education Expenditure",
     description: "This map highlights global education spending.",
     View: EducationExpenditureView,
   },
   {
     icon: "📚",
+    path: "/performance-dashboard",
+    slug: "performance-dashboard",
     title: "Performance Dashboard",
     description: "A dashboard that visualizes student performance data.",
     View: StudentPerformanceDashboardView,
   },
   {
     icon: "📈",
+    path: "/predictive-analysis",
+    slug: "predictive-analysis",
     title: "Predictive Analysis",
     description: "Model performance, predictions, and feature importance.",
     View: PredictiveAnalysisView,
   },
   {
     icon: "🧐",
+    path: "/user-reviews",
+    slug: "user-reviews",
     title: "User Reviews",
     description: "Feedback on dashboard usability and key metric clarity.",
     View: UserReviewsView,
   },
 ];
 
-function InsightEdDashboard() {
-  const [currentIndex, setCurrentIndex] = useState(1);
+function InsightEdDashboard({ activeSection }: { activeSection: string }) {
+  const navigate = useNavigate();
+  const currentIndex = Math.max(1, sections.findIndex((section) => section.slug === activeSection) + 1);
   const ActiveView = sections[currentIndex - 1].View;
 
   return (
@@ -117,7 +125,7 @@ function InsightEdDashboard() {
               key={section.title}
               onClick={() => {
                 if (!isActive) {
-                  setCurrentIndex(sectionIndex);
+                  navigate(section.path);
                 }
               }}
               sx={{
@@ -210,7 +218,10 @@ function InsightEdDashboard() {
 export function App() {
   return (
     <Routes>
-      <Route element={<InsightEdDashboard />} path="/" />
+      <Route element={<Navigate replace to="/performance-dashboard" />} path="/" />
+      {sections.map((section) => (
+        <Route element={<InsightEdDashboard activeSection={section.slug} />} key={section.slug} path={section.path} />
+      ))}
       <Route element={<ProjectsIndex />} path="/projects" />
       <Route element={<ProjectDetail />} path="/projects/:slug/:variant" />
       <Route element={<ProjectDetail />} path="/projects/:slug" />

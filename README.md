@@ -2,7 +2,7 @@
 
 [Live Demo](https://insighted-viz.vercel.app)
 
-InsightEd is an interactive data visualization app for exploring education spending, student performance, predictive modeling results, and focused visualization studies. It is built with React, TypeScript, Vite, Material UI, D3, Leaflet, and noUiSlider.
+InsightEd is an interactive data visualization app for exploring education spending, student performance, predictive modeling results, and focused visualization studies. It is built with React, TypeScript, Vite, Material UI, D3, and Leaflet.
 
 ## Features
 
@@ -26,7 +26,6 @@ InsightEd is an interactive data visualization app for exploring education spend
 - Material UI
 - D3
 - Leaflet
-- noUiSlider
 - React Router
 
 ## Getting Started
@@ -63,14 +62,21 @@ npm run preview
 
 ## App Routes
 
-- `/` - main InsightEd dashboard
+- `/` - student performance dashboard
+- `/education-expenditure` - global education expenditure map
+- `/predictive-analysis` - predictive model results
+- `/user-reviews` - dashboard feedback
 - `/projects` - project directory
 - `/projects/equal-spacing-layout`
 - `/projects/expository-visualization`
 - `/projects/misleading-visualization/china-internet-users`
 - `/projects/misleading-visualization/us-internet-usage`
-- `/projects/interactive-visualization`
-- `/projects/data-visualization-for-advocacy`
+- `/projects/interactive-visualization` - renewable energy comparison; selected countries and years are stored in the query string
+- `/projects/data-visualization-for-advocacy/co2-levels`
+- `/projects/data-visualization-for-advocacy/major-co2-contributors`
+- `/projects/data-visualization-for-advocacy/temperature-anomalies`
+- `/projects/data-visualization-for-advocacy/sea-level-rise`
+- `/projects/data-visualization-for-advocacy/energy-mix`
 
 ## Deployment
 
